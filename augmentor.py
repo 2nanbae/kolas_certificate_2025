@@ -76,13 +76,42 @@ class HybridAudioAugmentor:
     # --------------------------------------------------------
     # librosa 기반 DSP 효과 (정밀 처리)
     # --------------------------------------------------------
+    def add_noise(self, y, noise_factor=0.005):
+        """랜덤 노이즈 추가 → STT 학습용 기본 증강"""
+        noise = np.random.randn(len(y))
+        return y + noise_factor * noise
+
     def pitch_shift(self, y, n_steps=2):
         """음높이를 반음 단위로 조절"""
         return librosa.effects.pitch_shift(y=y, sr=self.sr, n_steps=n_steps)
 
+    def speed_librosa(self, y, rate=1.1):
+        """속도 변화 (pitch 유지). 고품질 DSP"""
+        return librosa.effects.time_stretch(y=y, rate=rate)
+
     # --------------------------------------------------------
     # pydub 기반 효과 (빠른 처리)
     # --------------------------------------------------------
+    def gain(self, seg, db=5):
+        """볼륨 증감 (빠르고 안정적)"""
+        return seg + db
+
+    def speed_pydub(self, seg, rate=1.1):
+        """
+        속도 변화 (빠르지만 pitch 변함)
+        → frame_rate 조절 방식
+        """
+        new_fr = int(seg.frame_rate * rate)
+        return seg._spawn(seg.raw_data, overrides={"frame_rate": new_fr}).set_frame_rate(seg.frame_rate)
+
+    def lowpass(self, seg, cutoff=3000):
+        """저역 통과 필터 (고음 제거)"""
+        return seg.low_pass_filter(cutoff)
+
+    def highpass(self, seg, cutoff=300):
+        """고역 통과 필터 (저음 제거)"""
+        return seg.high_pass_filter(cutoff)
+
     def phase_invert(self, seg):
         """
         위상 반전 (파형 polarity 반전)
@@ -117,15 +146,27 @@ class HybridAudioAugmentor:
         # librosa 증강 항목 (DSP 기반)
         # ---------------------------------------------------
         librosa_items = [
-            ("pitch", self.pitch_shift, y, "librosa")
+            # ("noise", self.add_noise, y, "librosa"),
+            ("pitch", self.pitch_shift, y, "librosa"),
         ]
+
+        # speed 엔진이 librosa면 librosa 방식 speed 추가
+        # if self.speed_engine == "librosa":
+        #     librosa_items.append(("speed", self.speed_librosa, y, "librosa"))
 
         # ---------------------------------------------------
         # pydub 증강 항목 (빠른 필터 & 볼륨)
         # ---------------------------------------------------
         pydub_items = [
-            ("phase", self.phase_invert, seg, "pydub")
+            ("gain", self.gain, seg, "pydub"),
+            # ("lowpass", self.lowpass, seg, "pydub"),
+            # ("highpass", self.highpass, seg, "pydub"),
+            ("phase", self.phase_invert, seg, "pydub"),
         ]
+
+        # speed 엔진이 pydub이면 pydub 방식 speed 추가
+        # if self.speed_engine == "pydub":
+        #     pydub_items.append(("speed", self.speed_pydub, seg, "pydub"))
 
         # ---------------------------------------------------
         # 2) 각 항목 실행 및 시간 측정
